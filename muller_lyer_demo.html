@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>心理物理測定法のデモ</title>
+
+<style>
+
+body{
+    font-family:sans-serif;
+    text-align:center;
+    margin:20px;
+}
+
+canvas{
+    border:1px solid #aaa;
+    margin:10px;
+    background:white;
+}
+
+button{
+    padding:10px;
+    margin:5px;
+    min-width:150px;
+    font-size:16px;
+}
+
+button:disabled{
+    opacity:0.4;
+}
+
+input{
+    width:70px;
+}
+
+table{
+    margin:auto;
+    border-collapse:collapse;
+}
+
+td,th{
+    border:1px solid #aaa;
+    padding:5px 10px;
+}
+
+.flexrow{
+    display:flex;
+    justify-content:center;
+    align-items:flex-start;
+    gap:20px;
+    flex-wrap:wrap;
+}
+
+.block{
+    margin-bottom:20px;
+}
+
+</style>
+</head>
+
+<body>
+
+<h2>心理物理測定法のデモ</h2>
+
+<!-- ================================================= -->
+<!-- 設定UI -->
+<!-- ================================================= -->
+
+<div class="block">
+
+<select id="mode">
+<option value="adj">調整法</option>
+<option value="lim">極限法</option>
+<option value="con">恒常法</option>
+<option value="ada">変形上下法</option>
+</select>
+
+<select id="series">
+<option value="down">下降系列</option>
+<option value="up">上昇系列</option>
+</select>
+
+<br><br>
+
+調整step:
+<input id="step_adj" value="2">
+
+極限step:
+<input id="step_lim" value="2">
+
+恒常間隔:
+<input id="step_con" value="2">
+
+適応初期step:
+<input id="step_ada" value="2">
+
+適応最小step:
+<input id="step_min" value="2">
+
+適応転換点:
+<input id="rev_target" value="8">
+
+<br><br>
+
+調整初期:
+<input id="start_adj" value="200">
+
+極限↓:
+<input id="start_down" value="250">
+
+極限↑:
+<input id="start_up" value="100">
+
+適応初期:
+<input id="start_ada" value="190">
+
+<br><br>
+
+恒常 最小:
+<input id="min_con" value="150">
+
+最大:
+<input id="max_con" value="190">
+
+繰返し:
+<input id="rep_con" value="4">
+
+<br><br>
+
+<label>
+<input type="checkbox" id="showParam">
+パラメタ表示
+</label>
+
+</div>
+
+<!-- ================================================= -->
+<!-- status -->
+<!-- ================================================= -->
+
+<h3 id="status"></h3>
+
+<!-- ================================================= -->
+<!-- stimulus -->
+<!-- ================================================= -->
+
+<div class="block">
+
+<canvas id="cv" width="700" height="300"></canvas>
+
+</div>
+
+<!-- ================================================= -->
+<!-- buttons -->
+<!-- ================================================= -->
+
+<div class="block">
+
+<button id="btnL"></button>
+<button id="btnR"></button>
+<button id="btnConfirm">確定</button>
+
+</div>
+
+<!-- ================================================= -->
+<!-- graph -->
+<!-- ================================================= -->
+
+<div class="flexrow">
+
+<div>
+<h3>心理測定関数</h3>
+<canvas id="graph" width="420" height="260"></canvas>
+</div>
+
+<div>
+<h3>収束トラジェクトリ</h3>
+<canvas id="traj" width="420" height="260"></canvas>
+</div>
+
+</div>
+
+<!-- ================================================= -->
+<!-- results -->
+<!-- ================================================= -->
+
+<h3>結果</h3>
+
+<table>
+
+<tr>
+<th>方法</th>
+<th>PSE</th>
+</tr>
+
+<tr>
+<td>調整法</td>
+<td id="r_adj">-</td>
+</tr>
+
+<tr>
+<td>極限法（下降）</td>
+<td id="r_ld">-</td>
+</tr>
+
+<tr>
+<td>極限法（上昇）</td>
+<td id="r_lu">-</td>
+</tr>
+
+<tr>
+<td>恒常法</td>
+<td id="r_con">-</td>
+</tr>
+
+<tr>
+<td>変形上下法</td>
+<td id="r_ada">-</td>
+</tr>
+
+</table>
+
+<script>
+
+// =====================================================
+// DOM
+// =====================================================
+
+const modeSel = document.getElementById("mode");
+const seriesSel = document.getElementById("series");
+
+const btnL = document.getElementById("btnL");
+const btnR = document.getElementById("btnR");
+const btnConfirm = document.getElementById("btnConfirm");
+
+const statusText = document.getElementById("status");
+
+// =====================================================
+// canvas
+// =====================================================
+
+const ctx = cv.getContext("2d");
+const g = graph.getContext("2d");
+const tctx = traj.getContext("2d");
+
+// =====================================================
+// state
+// =====================================================
+
+let S;
+
+// =====================================================
+
+function initState(){
+
+return {
+
+base:150,
+val:150,
+step:5,
+
+finished:false,
+
+// ★ FIX
+leftIsTarget:false,
+
+// 恒常法
+stim:[],
+idx:0,
+resp:[],
+
+// 適応法
+traj:[],
+rev:0,
+lastDir:0,
+correctCount:0
+
+};
+
+}
+
+// =====================================================
+
+function mode(){
+return modeSel.value;
+}
+
+function series(){
+return seriesSel.value;
+}
+
+// =====================================================
+// reset
+// =====================================================
+
+function reset(){
+
+S = initState();
+
+btnL.disabled=false;
+btnR.disabled=false;
+btnConfirm.disabled=false;
+
+// g.clearRect(0,0,420,260);
+tctx.clearRect(0,0,420,260);
+
+// =====================================================
+// 調整法
+// =====================================================
+
+if(mode()=="adj"){
+
+S.val = +start_adj.value;
+
+}
+
+// =====================================================
+// 極限法
+// =====================================================
+
+if(mode()=="lim"){
+
+if(series()=="down"){
+S.val = +start_down.value;
+}
+else{
+S.val = +start_up.value;
+}
+
+}
+
+// =====================================================
+// 恒常法
+// =====================================================
+
+if(mode()=="con"){
+
+let min = +min_con.value;
+let max = +max_con.value;
+let step = +step_con.value;
+let rep = +rep_con.value;
+
+for(let i=min;i<=max;i+=step){
+
+for(let j=0;j<rep;j++){
+
+S.stim.push(i);
+
+}
+
+}
+
+S.stim.sort(()=>Math.random()-0.5);
+
+nextTrial();
+
+}
+
+// =====================================================
+// 適応法
+// =====================================================
+
+if(mode()=="ada"){
+
+S.val = +start_ada.value;
+S.step = +step_ada.value;
+
+}
+
+updateButtons();
+
+draw();
+
+}
+
+// =====================================================
+// buttons
+// =====================================================
+
+function updateButtons(){
+
+btnConfirm.style.display="inline-block";
+
+if(mode()=="adj"){
+
+btnL.textContent="短くする";
+btnR.textContent="長くする";
+
+}
+
+else if(mode()=="lim"){
+
+btnL.textContent="続行";
+btnR.textContent="確定";
+
+btnConfirm.style.display="none";
+
+}
+
+else{
+
+btnL.textContent="← 左が長い";
+btnR.textContent="右が長い →";
+
+btnConfirm.style.display="none";
+
+}
+
+}
+
+// =====================================================
+// next trial
+// =====================================================
+
+function nextTrial(){
+
+// =====================================================
+// 極限法
+// =====================================================
+
+if(mode()=="lim"){
+
+let s = +step_lim.value;
+
+if(series()=="down"){
+S.val -= s;
+}
+else{
+S.val += s;
+}
+
+}
+
+// =====================================================
+// 恒常法
+// =====================================================
+
+if(mode()=="con"){
+
+if(S.idx >= S.stim.length){
+
+fitPsychometric();
+finish();
+
+return;
+
+}
+
+S.val = S.stim[S.idx++];
+
+}
+
+// =====================================================
+// ★ FIX
+// =====================================================
+
+S.leftIsTarget = Math.random() < 0.5;
+
+draw();
+
+}
+
+// =====================================================
+// draw
+// =====================================================
+
+function draw(){
+
+ctx.clearRect(0,0,700,300);
+
+ctx.lineWidth=2;
+ctx.strokeStyle="black";
+
+// =====================================================
+// 調整法・極限法
+// =====================================================
+
+if(mode()=="adj" || mode()=="lim"){
+
+drawML(200,150,S.base,true);
+drawML(500,150,S.val,false);
+
+}
+
+// =====================================================
+// 恒常法・適応法
+// =====================================================
+
+else{
+
+let leftLen;
+let rightLen;
+
+let leftOutward;
+let rightOutward;
+
+// =====================================================
+// ★ FIX
+// =====================================================
+
+if(S.leftIsTarget){
+
+// 左 target
+leftLen = S.val;
+leftOutward = false;
+
+// 右 reference
+rightLen = S.base;
+rightOutward = true;
+
+}
+else{
+
+// 左 reference
+leftLen = S.base;
+leftOutward = true;
+
+// 右 target
+rightLen = S.val;
+rightOutward = false;
+
+}
+
+drawML(
+200,
+150,
+leftLen,
+leftOutward
+);
+
+drawML(
+500,
+150,
+rightLen,
+rightOutward
+);
+
+}
+
+// =====================================================
+
+if(showParam.checked){
+
+ctx.fillStyle="black";
+ctx.font="16px sans-serif";
+
+ctx.fillText(
+"val = "+S.val.toFixed(2),
+300,
+280
+);
+
+}
+
+updateStatus();
+
+drawTrajectory();
+
+}
+
+// =====================================================
+// Müller-Lyer
+// =====================================================
+
+function drawML(cx,cy,len,outward){
+
+let h = len/2;
+
+ctx.beginPath();
+
+// 中央線
+ctx.moveTo(cx-h,cy);
+ctx.lineTo(cx+h,cy);
+
+// outward
+if(outward){
+
+// 左
+ctx.moveTo(cx-h,cy);
+ctx.lineTo(cx-h-12,cy+8);
+
+ctx.moveTo(cx-h,cy);
+ctx.lineTo(cx-h-12,cy-8);
+
+// 右
+ctx.moveTo(cx+h,cy);
+ctx.lineTo(cx+h+12,cy+8);
+
+ctx.moveTo(cx+h,cy);
+ctx.lineTo(cx+h+12,cy-8);
+
+}
+
+// inward
+else{
+
+// 左
+ctx.moveTo(cx-h,cy);
+ctx.lineTo(cx-h+12,cy+8);
+
+ctx.moveTo(cx-h,cy);
+ctx.lineTo(cx-h+12,cy-8);
+
+// 右
+ctx.moveTo(cx+h,cy);
+ctx.lineTo(cx+h-12,cy+8);
+
+ctx.moveTo(cx+h,cy);
+ctx.lineTo(cx+h-12,cy-8);
+
+}
+
+ctx.stroke();
+
+}
+
+// =====================================================
+// status
+// =====================================================
+
+function updateStatus(){
+
+if(S.finished){
+
+statusText.textContent="測定終了";
+return;
+
+}
+
+if(mode()=="con"){
+
+statusText.textContent =
+"恒常法："+S.idx+" / "+S.stim.length+" 試行";
+
+}
+
+else if(mode()=="ada"){
+
+statusText.textContent =
+"変形上下法：転換点 "+S.rev+" / "+rev_target.value;
+
+}
+
+else if(mode()=="adj"){
+
+statusText.textContent =
+"調整法";
+
+}
+
+else if(mode()=="lim"){
+
+statusText.textContent =
+"極限法（"+(series()=="down"?"下降":"上昇")+"系列）";
+
+}
+
+}
+
+// =====================================================
+// button events
+// =====================================================
+
+btnL.onclick=()=>handle(0);
+btnR.onclick=()=>handle(1);
+
+btnConfirm.onclick=confirmResponse;
+
+// =====================================================
+// handle
+// =====================================================
+
+function handle(r){
+
+if(S.finished) return;
+
+// =====================================================
+// 調整法
+// =====================================================
+
+if(mode()=="adj"){
+
+let s = +step_adj.value;
+
+if(r==1){
+S.val += s;
+}
+else{
+S.val -= s;
+}
+
+draw();
+
+return;
+
+}
+
+// =====================================================
+// 極限法
+// =====================================================
+
+if(mode()=="lim"){
+
+if(r==0){
+
+nextTrial();
+
+}
+else{
+
+confirmResponse();
+
+}
+
+return;
+
+}
+
+// =====================================================
+// 恒常法
+// =====================================================
+
+if(mode()=="con"){
+
+// ★ FIX
+if(S.leftIsTarget){
+r = 1-r;
+}
+
+S.resp.push([S.val,r]);
+
+nextTrial();
+
+return;
+
+}
+
+// =====================================================
+// 変形上下法
+// =====================================================
+
+if(mode()=="ada"){
+
+S.traj.push(S.val);
+
+// ★ FIX
+if(S.leftIsTarget){
+r = 1-r;
+}
+
+let correct;
+
+if(S.val > S.base){
+
+correct = (r==1);
+
+}
+else{
+
+correct = (r==0);
+
+}
+
+let dir;
+
+// incorrect
+if(!correct){
+
+S.val += S.step;
+
+dir = 1;
+
+S.correctCount = 0;
+
+}
+
+// correct
+else{
+
+S.correctCount++;
+
+if(S.correctCount >= 2){
+
+S.val -= S.step;
+
+dir = -1;
+
+S.correctCount = 0;
+
+}
+else{
+
+// =====================================
+// ★ FIX
+// 同じ刺激値でも左右位置は更新
+// =====================================
+
+S.leftIsTarget = Math.random() < 0.5;
+
+draw();
+
+return;
+
+}
+
+}
+
+// reversal
+if(S.lastDir && dir != S.lastDir){
+
+S.rev++;
+
+S.step = Math.max(
+S.step/2,
++step_min.value
+);
+
+}
+
+S.lastDir = dir;
+
+// finish
+if(S.rev >= +rev_target.value){
+
+r_ada.textContent =
+S.val.toFixed(2);
+
+finish();
+
+}
+
+S.leftIsTarget = Math.random() < 0.5;
+
+draw();
+
+}
+
+}
+
+// =====================================================
+// confirm
+// =====================================================
+
+function confirmResponse(){
+
+if(mode()=="adj"){
+
+r_adj.textContent =
+S.val.toFixed(2);
+
+finish();
+
+}
+
+if(mode()=="lim"){
+
+if(series()=="down"){
+
+r_ld.textContent =
+S.val.toFixed(2);
+
+}
+else{
+
+r_lu.textContent =
+S.val.toFixed(2);
+
+}
+
+finish();
+
+}
+
+}
+
+// =====================================================
+// finish
+// =====================================================
+
+function finish(){
+
+S.finished = true;
+
+btnL.disabled = true;
+btnR.disabled = true;
+btnConfirm.disabled = true;
+
+}
+
+// =====================================================
+// psychometric fit
+// =====================================================
+
+function fitPsychometric(){
+
+let map={};
+
+S.resp.forEach(([x,y])=>{
+
+if(!map[x]){
+map[x]=[];
+}
+
+map[x].push(y);
+
+});
+
+let xs=[],ys=[];
+
+for(let k in map){
+
+xs.push(+k);
+
+ys.push(
+map[k].reduce((a,b)=>a+b)/map[k].length
+);
+
+}
+
+let best=150;
+let minErr=1e9;
+
+for(let mu=100;mu<=200;mu++){
+
+let err=0;
+
+xs.forEach((x,i)=>{
+
+let p =
+1/(1+Math.exp(-(x-mu)/10));
+
+err += (p-ys[i])**2;
+
+});
+
+if(err < minErr){
+
+minErr = err;
+best = mu;
+
+}
+
+}
+
+r_con.textContent =
+best.toFixed(2);
+
+drawPsychometric(xs,ys,best);
+
+}
+
+// =====================================================
+// psychometric draw
+// =====================================================
+
+function drawPsychometric(xs,ys,mu){
+
+g.clearRect(0,0,420,260);
+
+let minX = Math.min(...xs);
+let maxX = Math.max(...xs);
+
+let padX = 50;
+let padY = 220;
+
+let w = 300;
+let h = 180;
+
+// axes
+g.strokeStyle="black";
+
+g.beginPath();
+g.moveTo(padX,padY);
+g.lineTo(padX+w,padY);
+g.stroke();
+
+g.beginPath();
+g.moveTo(padX,padY);
+g.lineTo(padX,padY-h);
+g.stroke();
+
+// x ticks
+for(let i=0;i<=4;i++){
+
+let xv =
+minX + (maxX-minX)*(i/4);
+
+let x =
+padX + w*(i/4);
+
+g.fillText(
+xv.toFixed(0),
+x-10,
+padY+15
+);
+
+}
+
+// y ticks
+for(let i=0;i<=5;i++){
+
+let yv = i/5;
+
+let y =
+padY - h*(i/5);
+
+g.fillText(
+yv.toFixed(1),
+padX-30,
+y+3
+);
+
+}
+
+// labels
+g.fillText("刺激量",180,250);
+g.fillText("P(右が長い)",5,120);
+
+// points
+xs.forEach((x,i)=>{
+
+let px =
+padX + (x-minX)/(maxX-minX)*w;
+
+let py =
+padY - ys[i]*h;
+
+g.beginPath();
+g.arc(px,py,3,0,6.28);
+g.fill();
+
+});
+
+// fit curve
+g.strokeStyle="red";
+
+g.beginPath();
+
+for(let i=0;i<=200;i++){
+
+let xv =
+minX + (maxX-minX)*(i/200);
+
+let p =
+1/(1+Math.exp(-(xv-mu)/10));
+
+let px =
+padX + w*(i/200);
+
+let py =
+padY - p*h;
+
+if(i==0){
+g.moveTo(px,py);
+}
+else{
+g.lineTo(px,py);
+}
+
+}
+
+g.stroke();
+
+// PSE
+g.strokeStyle="blue";
+
+let px =
+padX + (mu-minX)/(maxX-minX)*w;
+
+g.beginPath();
+g.moveTo(px,padY);
+g.lineTo(px,padY-h);
+g.stroke();
+
+g.fillText("PSE",px-10,20);
+
+// 50%
+g.strokeStyle="gray";
+
+g.beginPath();
+g.moveTo(padX,padY-h*0.5);
+g.lineTo(padX+w,padY-h*0.5);
+g.stroke();
+
+}
+
+// =====================================================
+// trajectory
+// =====================================================
+
+function drawTrajectory(){
+
+tctx.clearRect(0,0,420,260);
+
+if(S.traj.length < 2) return;
+
+let min = Math.min(...S.traj);
+let max = Math.max(...S.traj);
+
+if(min == max){
+max = min + 1;
+}
+
+tctx.strokeStyle="black";
+
+tctx.beginPath();
+
+S.traj.forEach((v,i)=>{
+
+let x = 20 + i*10;
+
+let y =
+220 - (v-min)/(max-min)*180;
+
+if(i==0){
+tctx.moveTo(x,y);
+}
+else{
+tctx.lineTo(x,y);
+}
+
+});
+
+tctx.stroke();
+
+// axes
+tctx.beginPath();
+tctx.moveTo(20,220);
+tctx.lineTo(380,220);
+tctx.stroke();
+
+tctx.beginPath();
+tctx.moveTo(20,220);
+tctx.lineTo(20,20);
+tctx.stroke();
+
+tctx.fillText("試行",180,250);
+tctx.fillText("刺激量",5,20);
+
+}
+
+// =====================================================
+
+modeSel.onchange = reset;
+seriesSel.onchange = reset;
+
+// =====================================================
+
+reset();
+
+</script>
+
+</body>
+</html>
